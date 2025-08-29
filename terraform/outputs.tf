@@ -33,7 +33,7 @@ output "kubeconfig_command" {
 output "next_steps" {
   description = "Next steps after Terraform deployment"
   value = <<-EOT
-    1. Configure kubectl: ${self.kubeconfig_command}
+    1. Configure kubectl: aws eks update-kubeconfig --region ${var.aws_region} --name ${module.eks.cluster_name}
     2. Deploy NGINX: cd ../ansible && ansible-playbook playbooks/deploy.yml -e docker_registry_url=${module.ecr.repository_url}
     3. Get ALB URL: kubectl get ingress -n nginx-app
   EOT
