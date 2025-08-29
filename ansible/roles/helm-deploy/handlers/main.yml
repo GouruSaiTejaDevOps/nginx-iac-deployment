@@ -1,0 +1,32 @@
+---
+
+- name: rollback_helm_release
+  kubernetes.core.helm:
+    name: "{{ helm_release_name }}"
+    release_namespace: "{{ helm_namespace }}"
+    state: absent
+  when: helm_deploy_result is failed
+
+- name: restart_deployment
+  kubernetes.core.k8s:
+    state: present
+    definition:
+      apiVersion: apps/v1
+      kind: Deployment
+      metadata:
+        name: "{{ helm_release_name }}"
+        namespace: "{{ helm_namespace }}"
+        annotations:
+          deployment.kubernetes.io/revision: "{{ ansible_date_time.epoch }}"
+
+- name: wait_for_rollout
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ helm_release_name }}"
+    namespace: "{{ helm_namespace }}"
+    wait: true
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 300

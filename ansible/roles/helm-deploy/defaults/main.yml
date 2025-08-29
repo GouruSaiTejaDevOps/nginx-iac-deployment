@@ -1,0 +1,20 @@
+---
+
+# Helm settings
+helm_release_name: "{{ app_name }}-{{ environment }}"
+helm_namespace: "{{ app_name }}-{{ environment }}"
+helm_timeout: "600s"
+helm_wait: true
+helm_create_namespace: true
+
+# Chart settings
+helm_chart_path: "{{ playbook_dir }}/../../helm/nginx-app"
+values_file: "{{ playbook_dir }}/../../environments/{{ environment }}/values.yaml"
+
+# App settings
+app_name: "nginx-app"
+docker_image_name: "nginx-app"
+docker_image_tag: "{{ environment }}-latest"
+
+# Environment
+environment: "dev"

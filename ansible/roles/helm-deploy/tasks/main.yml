@@ -1,0 +1,116 @@
+---
+
+- name: Check required variables
+  ansible.builtin.fail:
+    msg: "Required variable {{ item }} is not defined"
+  when: vars[item] is not defined or vars[item] == ""
+  loop:
+    - docker_registry_url
+    - environment
+
+- name: Install required Python packages
+  ansible.builtin.pip:
+    name:
+      - kubernetes
+      - openshift
+    state: present
+
+- name: Update kubeconfig for EKS cluster
+  ansible.builtin.shell: |
+    aws eks update-kubeconfig --region {{ aws_region }} --name {{ cluster_name }}
+  environment:
+    AWS_REGION: "{{ aws_region }}"
+  changed_when: false
+
+- name: Login to ECR
+  ansible.builtin.shell: |
+    aws ecr get-login-password --region {{ aws_region }} | \
+    docker login --username AWS --password-stdin {{ docker_registry_url }}
+  environment:
+    AWS_REGION: "{{ aws_region }}"
+  no_log: true
+  changed_when: false
+
+- name: Build Docker image
+  community.docker.docker_image:
+    name: "{{ docker_image_full }}"
+    build:
+      path: "{{ docker_build_path }}"
+    source: build
+    state: present
+
+- name: Push Docker image to ECR
+  community.docker.docker_image:
+    name: "{{ docker_image_full }}"
+    push: true
+    source: local
+
+- name: Check if Helm is installed
+  ansible.builtin.command: helm version --client
+  register: helm_version
+  failed_when: false
+  changed_when: false
+
+- name: Install Helm if not present
+  ansible.builtin.shell: |
+    curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+  when: helm_version.rc != 0
+
+- name: Validate Helm chart
+  ansible.builtin.command: |
+    helm lint {{ helm_chart_path }} --values {{ values_file }}
+  register: helm_lint_result
+  changed_when: false
+
+- name: Display Helm lint results
+  ansible.builtin.debug:
+    msg: "{{ helm_lint_result.stdout_lines }}"
+
+- name: Deploy application with Helm
+  kubernetes.core.helm:
+    name: "{{ helm_release_name }}"
+    chart_ref: "{{ helm_chart_path }}"
+    release_namespace: "{{ helm_namespace }}"
+    create_namespace: "{{ helm_create_namespace }}"
+    wait: "{{ helm_wait }}"
+    timeout: "{{ helm_timeout }}"
+    values_files:
+      - "{{ values_file }}"
+    set_values: "{{ helm_set_values }}"
+    state: present
+  register: helm_deploy_result
+
+- name: Wait for deployment to be ready
+  kubernetes.core.k8s_info:
+    api_version: apps/v1
+    kind: Deployment
+    name: "{{ helm_release_name }}"
+    namespace: "{{ helm_namespace }}"
+    wait: true
+    wait_condition:
+      type: Available
+      status: "True"
+    wait_timeout: 300
+  register: deployment_status
+
+- name: Get Ingress information
+  kubernetes.core.k8s_info:
+    api_version: networking.k8s.io/v1
+    kind: Ingress
+    name: "{{ helm_release_name }}"
+    namespace: "{{ helm_namespace }}"
+  register: ingress_info
+
+- name: Display deployment information
+  ansible.builtin.debug:
+    msg: |
+      Helm deployment successful!
+      Environment: {{ environment | upper }}
+      Release: {{ helm_release_name }}
+      Namespace: {{ helm_namespace }}
+      Get ALB URL: kubectl get ingress -n {{ helm_namespace }}
+      Test endpoints:
+        - Health: curl http://ALB-DNS-NAME/health
+        - Phrase: curl http://ALB-DNS-NAME/phrase  
+        - Environment: curl http://ALB-DNS-NAME/env
+      HTTPS: curl -k https://ALB-DNS-NAME/phrase

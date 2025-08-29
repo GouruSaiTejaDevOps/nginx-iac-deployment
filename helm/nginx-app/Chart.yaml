@@ -1,0 +1,15 @@
+apiVersion: v2
+name: nginx-app
+description: NGINX IaC Application Helm Chart
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - nginx
+  - web
+  - iac
+maintainers:
+  - name: DevOps Team
+    email: devops@company.com
+sources:
+  - https://github.com/company/nginx-iac-deployment

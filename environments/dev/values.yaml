@@ -1,0 +1,44 @@
+# Development Environment Values
+environment: "dev"
+
+# Reduced resources for dev
+replicaCount: 1
+
+resources:
+  limits:
+    cpu: 200m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+# Image settings (will be overridden by Ansible)
+image:
+  repository: ""
+  tag: "dev-latest"
+  pullPolicy: Always
+
+# Ingress settings
+ingress:
+  enabled: true
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS-1-2-2017-01
+  tls:
+    enabled: true
+    certificateArn: ""  # Will be set by Ansible
+
+# Health checks - more lenient for dev
+healthCheck:
+  enabled: true
+  path: /health
+  initialDelaySeconds: 10
+  periodSeconds: 30
+  timeoutSeconds: 5
+  failureThreshold: 5
+
+# Disable anti-affinity for dev (single node)
+affinity: {}

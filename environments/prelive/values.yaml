@@ -1,0 +1,55 @@
+# Pre-live Environment Values
+environment: "prelive"
+
+# Production-like setup but smaller scale
+replicaCount: 2
+
+resources:
+  limits:
+    cpu: 400m
+    memory: 400Mi
+  requests:
+    cpu: 200m
+    memory: 200Mi
+
+# Image settings (will be overridden by Ansible)
+image:
+  repository: ""
+  tag: "prelive-latest"
+  pullPolicy: IfNotPresent
+
+# Ingress settings
+ingress:
+  enabled: true
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS-1-2-2017-01
+  tls:
+    enabled: true
+    certificateArn: ""  # Will be set by Ansible
+
+# Health checks - production-like
+healthCheck:
+  enabled: true
+  path: /health
+  initialDelaySeconds: 20
+  periodSeconds: 15
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+# Pod anti-affinity for better distribution
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - nginx-app
+        topologyKey: kubernetes.io/hostname

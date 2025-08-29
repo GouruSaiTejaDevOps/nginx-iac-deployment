@@ -1,0 +1,76 @@
+
+
+
+app:
+  name: nginx-app
+  version: "1.0.0"
+
+
+image:
+  repository: ""  # Will be set by environment
+  tag: "latest"
+  pullPolicy: IfNotPresent
+
+
+replicaCount: 3
+
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 80
+
+
+ingress:
+  enabled: true
+  className: "alb"
+  annotations:
+    alb.ingress.kubernetes.io/scheme: internet-facing
+    alb.ingress.kubernetes.io/target-type: ip
+    alb.ingress.kubernetes.io/listen-ports: '[{"HTTP": 80}, {"HTTPS": 443}]'
+    alb.ingress.kubernetes.io/ssl-redirect: '443'
+    alb.ingress.kubernetes.io/ssl-policy: ELBSecurityPolicy-TLS-1-2-2017-01
+  host: ""
+  tls:
+    enabled: true
+    certificateArn: ""
+
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 512Mi
+  requests:
+    cpu: 250m
+    memory: 256Mi
+
+
+healthCheck:
+  enabled: true
+  path: /health
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+
+
+configMap:
+  enabled: true
+
+
+nodeSelector: {}
+tolerations: []
+affinity:
+  podAntiAffinity:
+    preferredDuringSchedulingIgnoredDuringExecution:
+    - weight: 100
+      podAffinityTerm:
+        labelSelector:
+          matchExpressions:
+          - key: app.kubernetes.io/name
+            operator: In
+            values:
+            - nginx-app
+        topologyKey: kubernetes.io/hostname
+
+environment: "dev"

@@ -1,0 +1,32 @@
+---
+- name: Deploy NGINX to EKS using Helm
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  
+  vars:
+    docker_build_path: "{{ playbook_dir }}/../../app"
+    helm_chart_path: "{{ playbook_dir }}/../../helm/nginx-app"
+    environment: "{{ target_env | default('dev') }}"
+    values_file: "{{ playbook_dir }}/../../environments/{{ environment }}/values.yaml"
+    
+  pre_tasks:
+    - name: Validate required variables
+      ansible.builtin.assert:
+        that:
+          - docker_registry_url is defined
+          - docker_registry_url != ""
+          - target_env is defined
+          - target_env in ['dev', 'prelive', 'prod']
+        fail_msg: "Required variables: docker_registry_url, target_env (dev/prelive/prod)"
+
+    - name: Validate environment values file exists
+      ansible.builtin.stat:
+        path: "{{ values_file }}"
+      register: values_file_check
+      failed_when: not values_file_check.stat.exists
+
+  roles:
+    - name: helm-deploy
+      vars:
+        environment: "{{ target_env }}"

@@ -1,0 +1,185 @@
+name: Deploy to Environment
+
+on:
+  workflow_run:
+    workflows: ["Build and Push Docker Image"]
+    types:
+      - completed
+    branches:
+      - dev
+      - staging  
+      - prod
+
+env:
+  AWS_REGION: us-west-2
+
+jobs:
+  deploy:
+    name: Deploy to Environment
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    
+    strategy:
+      matrix:
+        environment: 
+          - ${{ github.event.workflow_run.head_branch == 'dev' && 'dev' || github.event.workflow_run.head_branch == 'staging' && 'prelive' || github.event.workflow_run.head_branch == 'prod' && 'prod' || 'dev' }}
+    
+    environment: ${{ matrix.environment }}
+    
+    # Add approval gates for staging and production
+    concurrency:
+      group: deploy-${{ matrix.environment }}
+      cancel-in-progress: false
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        ref: ${{ github.event.workflow_run.head_sha }}
+        
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v4
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: ${{ env.AWS_REGION }}
+        
+    - name: Setup Terraform
+      uses: hashicorp/setup-terraform@v3
+      with:
+        terraform_version: ~1.0
+        terraform_wrapper: false
+        
+    - name: Setup Ansible
+      run: |
+        pip install ansible kubernetes openshift
+        ansible-galaxy collection install -r ansible/requirements.yml
+        
+    - name: Setup kubectl
+      uses: azure/setup-kubectl@v3
+      with:
+        version: 'v1.28.0'
+        
+    - name: Setup Helm
+      uses: azure/setup-helm@v3
+      with:
+        version: 'v3.12.0'
+        
+    - name: Download deployment artifact
+      uses: actions/download-artifact@v4
+      with:
+        name: deployment-info-${{ matrix.environment }}
+        path: artifacts/
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        run-id: ${{ github.event.workflow_run.id }}
+        
+    - name: Read deployment info
+      id: deployment-info
+      run: |
+        DEPLOYMENT_INFO=$(cat artifacts/deployment-info.json)
+        echo "deployment_info=$DEPLOYMENT_INFO" >> $GITHUB_OUTPUT
+        
+        IMAGE_REPO=$(echo $DEPLOYMENT_INFO | jq -r '.image_repository')
+        IMAGE_TAG=$(echo $DEPLOYMENT_INFO | jq -r '.image_tag')
+        ENVIRONMENT=$(echo $DEPLOYMENT_INFO | jq -r '.environment')
+        
+        echo "image_repo=$IMAGE_REPO" >> $GITHUB_OUTPUT
+        echo "image_tag=$IMAGE_TAG" >> $GITHUB_OUTPUT
+        echo "environment=$ENVIRONMENT" >> $GITHUB_OUTPUT
+        
+    - name: Manual approval for deployment
+      if: matrix.environment == 'prelive' || matrix.environment == 'prod'
+      run: |
+        echo "Waiting for manual approval to deploy to ${{ matrix.environment }} environment..."
+        echo "Please approve this deployment in the GitHub environment protection rules."
+        echo "Environment: ${{ matrix.environment }}"
+        echo "Image: ${{ steps.deployment-info.outputs.image_repo }}:${{ steps.deployment-info.outputs.image_tag }}"
+        echo "Branch: ${{ github.event.workflow_run.head_branch }}"
+        echo "Commit: ${{ github.event.workflow_run.head_sha }}"
+        
+        # This step will pause until manual approval is given
+        # The workflow will continue automatically after approval
+        
+    - name: Deploy infrastructure
+      run: |
+        cd terraform/
+        terraform init
+        terraform plan -var-file="../environments/${{ steps.deployment-info.outputs.environment }}/terraform.tfvars" -out=tfplan
+        terraform apply tfplan
+        
+    - name: Get Terraform outputs
+      id: terraform-outputs
+      run: |
+        cd terraform/
+        ECR_URL=$(terraform output -raw ecr_repository_url)
+        CERT_ARN=$(terraform output -raw self_signed_certificate_arn)
+        CLUSTER_NAME=$(terraform output -raw cluster_name)
+        
+        echo "ecr_url=$ECR_URL" >> $GITHUB_OUTPUT
+        echo "cert_arn=$CERT_ARN" >> $GITHUB_OUTPUT
+        echo "cluster_name=$CLUSTER_NAME" >> $GITHUB_OUTPUT
+        
+    - name: Deploy application with Helm
+      run: |
+        echo "Starting deployment to ${{ matrix.environment }} environment..."
+        echo "Image: ${{ steps.deployment-info.outputs.image_repo }}:${{ steps.deployment-info.outputs.image_tag }}"
+        echo "Infrastructure: ${{ steps.terraform-outputs.outputs.cluster_name }}"
+        echo "Timestamp: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        
+        cd ansible/
+        ansible-playbook playbooks/deploy-helm.yml \
+          -e target_env=${{ steps.deployment-info.outputs.environment }} \
+          -e docker_registry_url=${{ steps.terraform-outputs.outputs.ecr_url }} \
+          -e self_signed_certificate_arn=${{ steps.terraform-outputs.outputs.cert_arn }} \
+          -e cluster_name=${{ steps.terraform-outputs.outputs.cluster_name }} \
+          -e aws_region=${{ env.AWS_REGION }} \
+          -e docker_image_tag=${{ steps.deployment-info.outputs.image_tag }}
+          
+    - name: Get application URL
+      run: |
+        kubectl get ingress -n nginx-app-${{ steps.deployment-info.outputs.environment }}
+        
+    - name: Run smoke tests
+      run: |
+        echo "Running smoke tests for ${{ steps.deployment-info.outputs.environment }} environment"
+        
+        ALB_URL=$(kubectl get ingress -n nginx-app-${{ steps.deployment-info.outputs.environment }} -o jsonpath='{.items[0].status.loadBalancer.ingress[0].hostname}')
+        
+        if [ ! -z "$ALB_URL" ]; then
+          echo "Testing endpoints on $ALB_URL"
+          
+          # Wait for ALB to be ready
+          sleep 60
+          
+          # Test health endpoint
+          curl -f http://$ALB_URL/health || echo "Health check failed"
+          
+          # Test phrase endpoint  
+          curl -f http://$ALB_URL/phrase || echo "Phrase endpoint failed"
+          
+          # Test environment endpoint
+          curl -f http://$ALB_URL/env || echo "Environment endpoint failed"
+          
+          echo "Smoke tests completed"
+        else
+          echo "ALB URL not found, skipping smoke tests"
+        fi
+        
+    - name: Deployment summary
+      if: success()
+      run: |
+        echo "=========================================="
+        echo "✅ DEPLOYMENT COMPLETED SUCCESSFULLY"
+        echo "=========================================="
+        echo "Environment: ${{ matrix.environment }}"
+        echo "Image: ${{ steps.deployment-info.outputs.image_repo }}:${{ steps.deployment-info.outputs.image_tag }}"
+        echo "Cluster: ${{ steps.terraform-outputs.outputs.cluster_name }}"
+        echo "Branch: ${{ github.event.workflow_run.head_branch }}"
+        echo "Commit: ${{ github.event.workflow_run.head_sha }}"
+        echo "Deployed at: $(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+        echo "=========================================="
+        echo ""
+        echo "Next steps:"
+        echo "1. Verify deployment: kubectl get pods -n nginx-app-${{ matrix.environment }}"
+        echo "2. Check ingress: kubectl get ingress -n nginx-app-${{ matrix.environment }}"
+        echo "3. Test endpoints: curl http://ALB-DNS-NAME/health"

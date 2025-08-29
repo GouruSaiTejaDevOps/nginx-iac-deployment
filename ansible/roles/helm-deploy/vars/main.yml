@@ -1,0 +1,11 @@
+---
+
+# Derived variables
+docker_image_full: "{{ docker_registry_url }}/{{ docker_image_name }}:{{ docker_image_tag }}"
+
+# Helm values to override
+helm_set_values:
+  - "image.repository={{ docker_registry_url }}/{{ docker_image_name }}"
+  - "image.tag={{ docker_image_tag }}"
+  - "environment={{ environment }}"
+  - "ingress.tls.certificateArn={{ self_signed_certificate_arn | default('') }}"
