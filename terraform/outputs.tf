@@ -38,3 +38,9 @@ output "next_steps" {
     3. Get ALB URL: kubectl get ingress -n nginx-app
   EOT
 }
+
+output "aws_region" {
+  description = "AWS region where resources are deployed"
+  value       = var.aws_region
+  
+}
