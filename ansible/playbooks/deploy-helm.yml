@@ -11,6 +11,10 @@
     values_file: "{{ playbook_dir }}/../../environments/{{ environment }}/values.yaml"
     
   pre_tasks:
+    - name: Setup Ansible
+      run: |
+        ansible-galaxy collection install -r ansible/requirements.yml
+        
     - name: Validate required variables
       ansible.builtin.assert:
         that:
